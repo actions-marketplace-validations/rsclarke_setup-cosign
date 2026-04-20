@@ -1,0 +1,38 @@
+name: Test setup-cosign
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Cached install (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install cosign
+        uses: ./
+      - name: Verify cosign
+        run: |
+          which cosign
+          cosign version
+
+  test-cache-miss:
+    name: Forced cache miss (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install cosign
+        uses: ./
+        with:
+          use-cache: "false"
+      - name: Verify cosign
+        run: |
+          which cosign
+          cosign version
