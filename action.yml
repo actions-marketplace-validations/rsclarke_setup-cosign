@@ -26,14 +26,17 @@ runs:
     - name: Resolve version
       id: resolve-version
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        GH_API_TOKEN: ${{ github.token }}
       run: |
-        if [[ -n "${{ inputs.version }}" ]]; then
-          COSIGN_VERSION="${{ inputs.version }}"
+        if [[ -n "${INPUT_VERSION}" ]]; then
+          COSIGN_VERSION="${INPUT_VERSION}"
         else
           echo "No version specified, fetching latest release..."
 
           LATEST_RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Authorization: Bearer ${GH_API_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/sigstore/cosign/releases/latest)
@@ -48,6 +51,11 @@ runs:
 
         if [[ "${COSIGN_VERSION}" != v* ]]; then
           COSIGN_VERSION="v${COSIGN_VERSION}"
+        fi
+
+        if [[ ! "${COSIGN_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          echo "Invalid cosign version: ${COSIGN_VERSION}"
+          exit 1
         fi
 
         echo "Resolved cosign version: ${COSIGN_VERSION}"
@@ -65,6 +73,8 @@ runs:
     - name: Resolve install directory
       id: resolve-install-dir
       shell: bash
+      env:
+        VERSION_WITHOUT_V: ${{ steps.resolve-version.outputs.version-without-v }}
       run: |
         case "$RUNNER_OS" in
           macOS) OS="darwin" ;;
@@ -84,7 +94,6 @@ runs:
             ;;
         esac
 
-        VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
         INSTALL_DIR="${RUNNER_TOOL_CACHE}/cosign/${VERSION_WITHOUT_V}/${ARCH}"
         BINARY_PATH="${INSTALL_DIR}/cosign"
         COMPLETE_MARKER="${RUNNER_TOOL_CACHE}/cosign/${VERSION_WITHOUT_V}/${ARCH}.complete"
@@ -101,11 +110,11 @@ runs:
       id: check-cosign
       if: inputs.use-cache == 'true'
       shell: bash
+      env:
+        INSTALL_DIR: ${{ steps.resolve-install-dir.outputs.install-dir }}
+        BINARY_PATH: ${{ steps.resolve-install-dir.outputs.binary-path }}
+        COMPLETE_MARKER: ${{ steps.resolve-install-dir.outputs.complete-marker }}
       run: |
-        INSTALL_DIR="${{ steps.resolve-install-dir.outputs.install-dir }}"
-        BINARY_PATH="${{ steps.resolve-install-dir.outputs.binary-path }}"
-        COMPLETE_MARKER="${{ steps.resolve-install-dir.outputs.complete-marker }}"
-
         if [[ -f "${COMPLETE_MARKER}" && -f "${BINARY_PATH}" && -x "${BINARY_PATH}" ]]; then
           echo "Found cached cosign at ${INSTALL_DIR}"
           echo "found=true" >> "$GITHUB_OUTPUT"
@@ -118,12 +127,13 @@ runs:
     - name: Download and verify cosign
       if: inputs.use-cache != 'true' || steps.check-cosign.outputs.found != 'true'
       shell: bash
+      env:
+        COSIGN_VERSION: ${{ steps.resolve-version.outputs.version }}
+        INSTALL_DIR: ${{ steps.resolve-install-dir.outputs.install-dir }}
+        BINARY_PATH: ${{ steps.resolve-install-dir.outputs.binary-path }}
+        COMPLETE_MARKER: ${{ steps.resolve-install-dir.outputs.complete-marker }}
+        ASSET_NAME: ${{ steps.resolve-install-dir.outputs.asset-name }}
       run: |
-        COSIGN_VERSION="${{ steps.resolve-version.outputs.version }}"
-        INSTALL_DIR="${{ steps.resolve-install-dir.outputs.install-dir }}"
-        BINARY_PATH="${{ steps.resolve-install-dir.outputs.binary-path }}"
-        COMPLETE_MARKER="${{ steps.resolve-install-dir.outputs.complete-marker }}"
-        ASSET_NAME="${{ steps.resolve-install-dir.outputs.asset-name }}"
         RELEASE_URL="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
         TEMP_DIR=$(mktemp -d)
 
@@ -174,11 +184,15 @@ runs:
 
     - name: Add cosign to PATH
       shell: bash
-      run: |
-        echo "${{ steps.resolve-install-dir.outputs.install-dir }}" >> "$GITHUB_PATH"
+      env:
+        INSTALL_DIR: ${{ steps.resolve-install-dir.outputs.install-dir }}
+      run: | # zizmor: ignore[github-env] install-dir is derived from trusted runner paths and a validated semver
+        echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
 
     - name: Verify cosign installation
       shell: bash
+      env:
+        BINARY_PATH: ${{ steps.resolve-install-dir.outputs.binary-path }}
       run: |
-        echo "cosign installed at: ${{ steps.resolve-install-dir.outputs.binary-path }}"
-        "${{ steps.resolve-install-dir.outputs.binary-path }}" version
+        echo "cosign installed at: ${BINARY_PATH}"
+        "${BINARY_PATH}" version
